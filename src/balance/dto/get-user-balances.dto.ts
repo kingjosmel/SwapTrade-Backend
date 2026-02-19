@@ -3,6 +3,7 @@ import { IsString, IsNumber, ArrayMinSize } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { IsAssetType } from '../../common/validation';
 
+export class GetUserBalancesDto {
   @ApiProperty({ example: 'BTC', description: 'Asset symbol' })
   @IsAssetType()
   asset: string;
@@ -12,6 +13,7 @@ import { IsAssetType } from '../../common/validation';
   balance: number;
 }
 
+export class GetUserBalancesResponseDto {
   @ApiProperty({ type: [GetUserBalancesDto], description: 'Array of user balances' })
   @ArrayMinSize(0)
   data: GetUserBalancesDto[];

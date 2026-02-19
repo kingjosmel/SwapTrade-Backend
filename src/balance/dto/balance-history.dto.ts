@@ -3,6 +3,7 @@ import { IsString, IsNumber, IsOptional, IsISO8601, Max, Min, IsBoolean, ArrayMi
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsAssetType } from '../../common/validation';
 
+export class BalanceHistoryQueryDto {
   @ApiPropertyOptional({ example: '2024-01-01T00:00:00Z', description: 'Start date (ISO 8601)' })
   @IsOptional()
   @IsISO8601()
@@ -30,28 +31,6 @@ import { IsAssetType } from '../../common/validation';
   @IsNumber()
   @Min(0)
   offset?: number = 0;
-}
-
-export class BalanceHistoryResponseDto {
-  @ApiProperty({ type: [BalanceHistoryEntryDto], description: 'Array of balance change entries' })
-  @ArrayMinSize(0)
-  data: BalanceHistoryEntryDto[];
-
-  @ApiProperty({ example: 150, description: 'Total number of entries matching filters' })
-  @IsNumber()
-  total: number;
-
-  @ApiProperty({ example: 50, description: 'Number of entries returned per page' })
-  @IsNumber()
-  limit: number;
-
-  @ApiProperty({ example: 0, description: 'Number of entries skipped' })
-  @IsNumber()
-  offset: number;
-
-  @ApiProperty({ example: true, description: 'Whether more entries are available' })
-  @IsBoolean()
-  hasMore: boolean;
 }
 
 export class BalanceHistoryEntryDto {
@@ -84,4 +63,26 @@ export class BalanceHistoryEntryDto {
   @IsString()
   @IsOptional()
   relatedOrderId?: string;
+}
+
+export class BalanceHistoryResponseDto {
+  @ApiProperty({ type: [BalanceHistoryEntryDto], description: 'Array of balance change entries' })
+  @ArrayMinSize(0)
+  data: BalanceHistoryEntryDto[];
+
+  @ApiProperty({ example: 150, description: 'Total number of entries matching filters' })
+  @IsNumber()
+  total: number;
+
+  @ApiProperty({ example: 50, description: 'Number of entries returned per page' })
+  @IsNumber()
+  limit: number;
+
+  @ApiProperty({ example: 0, description: 'Number of entries skipped' })
+  @IsNumber()
+  offset: number;
+
+  @ApiProperty({ example: true, description: 'Whether more entries are available' })
+  @IsBoolean()
+  hasMore: boolean;
 }

@@ -66,21 +66,21 @@ export class BalanceServiceExample {
       }
 
       // Check sufficient balance
-      if (balance.amount < amount) {
+      if (balance.balance < amount) {
         throw new InsufficientBalanceException(
           asset,
           amount,
-          balance.amount,
+          balance.balance,
           {
             userId,
             requestedAmount: amount,
-            availableAmount: balance.amount,
+            availableAmount: balance.balance,
           },
         );
       }
 
       // Deduct balance
-      balance.amount -= amount;
+      balance.balance -= amount;
 
       try {
         await this.balanceRepository.save(balance);
@@ -134,7 +134,7 @@ export class BalanceServiceExample {
         throw new ResourceNotFoundException('Balance', `${userId}:${asset}`);
       }
 
-      return balance.amount;
+      return balance.balance;
     } catch (error) {
       if (error instanceof ResourceNotFoundException) {
         throw error;

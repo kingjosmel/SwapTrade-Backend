@@ -3,6 +3,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNumber, IsPositive, Min, Max, ArrayMinSize, IsISO8601 } from 'class-validator';
 import { IsAssetType } from '../../common/validation';
 
+export class AssetAllocation {
   @ApiProperty({ example: 'BTC', description: 'Asset symbol' })
   @IsAssetType()
   symbol: string;
@@ -33,6 +34,7 @@ import { IsAssetType } from '../../common/validation';
   allocationPercentage: number;
 }
 
+export class PortfolioSummaryDto {
   @ApiProperty({ example: 59600.75, description: 'Total value of the portfolio' })
   @IsNumber()
   @Min(0)

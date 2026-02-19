@@ -3,6 +3,7 @@ import { IsNumber, IsString, IsOptional, Min, MaxLength, IsUUID } from 'class-va
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsUserId } from '../../common/validation';
 
+export class UpdateBalanceDto {
   @ApiProperty({ example: 123, description: 'User ID (matches UserBalance.userId)' })
   @IsUserId()
   userId: number;

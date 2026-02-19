@@ -102,7 +102,6 @@ export class QueueAnalyticsService {
    */
   async getCurrentMetrics(queue: Queue): Promise<QueueMetricsSnapshot> {
     const counts = await queue.getJobCounts();
-    const jobStats = await queue.getCountsPerStatus();
 
     // Calculate average processing time
     const completedJobs = await queue.getCompleted();
@@ -135,17 +134,17 @@ export class QueueAnalyticsService {
         : 0;
 
     // Calculate rates
-    const total = counts.waiting + counts.active + counts.completed + counts.failed;
+    const total = (counts.waiting || 0) + (counts.active || 0) + (counts.completed || 0) + (counts.failed || 0);
     const successRate =
       total > 0
-        ? ((counts.completed / (counts.completed + counts.failed)) * 100).toFixed(
+        ? ((counts.completed / ((counts.completed || 0) + (counts.failed || 0))) * 100).toFixed(
             2,
           )
         : 0;
 
     const failureRate =
       total > 0
-        ? ((counts.failed / (counts.completed + counts.failed)) * 100).toFixed(
+        ? ((counts.failed / ((counts.completed || 0) + (counts.failed || 0))) * 100).toFixed(
             2,
           )
         : 0;
@@ -153,18 +152,18 @@ export class QueueAnalyticsService {
     return {
       timestamp: new Date(),
       queueName: queue.name,
-      activeJobs: counts.active,
-      waitingJobs: counts.waiting,
-      completedJobs: counts.completed,
-      failedJobs: counts.failed,
-      delayedJobs: counts.delayed,
-      stalledJobs: counts.stalled,
+      activeJobs: counts.active || 0,
+      waitingJobs: counts.waiting || 0,
+      completedJobs: counts.completed || 0,
+      failedJobs: counts.failed || 0,
+      delayedJobs: counts.delayed || 0,
+      stalledJobs: 0,  // Not available in current Bull API
       isPaused: await queue.isPaused(),
       averageProcessingTime,
       averageWaitTime,
       successRate: parseFloat(successRate as string),
       failureRate: parseFloat(failureRate as string),
-      completionRate: counts.completed / 60, // Assuming per minute
+      completionRate: (counts.completed || 0) / 60, // Assuming per minute
     };
   }
 
@@ -301,9 +300,17 @@ export class QueueAnalyticsService {
     }
 
     // Include alerts
-    report.alerts = this.alerts.filter(
-      (a) => a.timestamp >= startTime && a.timestamp <= endTime,
-    );
+    report.alerts = this.alerts
+      .filter((a) => a.timestamp >= startTime && a.timestamp <= endTime)
+      .map(
+        (a) =>
+          ({
+            queue: a.queue,
+            level: a.level as 'warning' | 'critical',
+            message: a.message,
+            timestamp: a.timestamp,
+          } as const),
+      );
 
     return report;
   }
@@ -330,9 +337,10 @@ export class QueueAnalyticsService {
 
     if (health.status !== 'healthy') {
       for (const issue of health.issues) {
+        const level: 'warning' | 'critical' = health.status as 'warning' | 'critical';
         this.alerts.push({
           queue: metrics.queueName,
-          level: health.status,
+          level,
           message: issue,
           timestamp: new Date(),
         });

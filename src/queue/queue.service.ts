@@ -294,4 +294,99 @@ export class QueueService {
 
     this.logger.log('All queues closed');
   }
+
+  async getDashboardSummary(): Promise<any> {
+    // Returns summary of all queue metrics
+    const metrics = await this.getAllQueueMetrics();
+    return {
+      totalQueues: 4,
+      metrics,
+      timestamp: new Date(),
+    };
+  }
+
+  async getAllQueueMetrics(): Promise<any> {
+    // Returns metrics for all queues
+    return {
+      notification: await this.getQueueMetrics('notification'),
+      email: await this.getQueueMetrics('email'),
+      report: await this.getQueueMetrics('report'),
+      cleanup: await this.getQueueMetrics('cleanup'),
+    };
+  }
+
+  async getQueueMetrics(queueName: string): Promise<any> {
+    const queue = this.getQueueInstance(queueName);
+    if (!queue) return null;
+    
+    const counts = await queue.getJobCounts();
+    return {
+      queue: queueName,
+      ...counts,
+    };
+  }
+
+  async getQueueJobCount(queueName: string): Promise<number> {
+    const queue = this.getQueueInstance(queueName);
+    if (!queue) return 0;
+    
+    const counts = await queue.getJobCounts();
+    const total = (counts.active || 0) + (counts.waiting || 0) + (counts.delayed || 0) + (counts.completed || 0) + (counts.failed || 0);
+    return total;
+  }
+
+  async waitUntilEmpty(queueName: string): Promise<void> {
+    const queue = this.getQueueInstance(queueName);
+    if (!queue) return;
+    
+    await queue.whenCurrentJobsFinished();
+  }
+
+  async getJobDetails(queueName: string, jobId: string): Promise<any> {
+    const queue = this.getQueueInstance(queueName);
+    if (!queue) return null;
+    
+    const job = await queue.getJob(jobId);
+    return job ? job.toJSON() : null;
+  }
+
+  async getJobsByStatus(queueName: string, status: string, _start?: number, _end?: number): Promise<any[]> {
+    const queue = this.getQueueInstance(queueName);
+    if (!queue) return [];
+    
+    let jobs: any[] = [];
+    switch (status) {
+      case 'active':
+        jobs = await queue.getActiveJobs();
+        break;
+      case 'waiting':
+        jobs = await queue.getWaitingJobs();
+        break;
+      case 'completed':
+        jobs = await queue.getCompletedJobs();
+        break;
+      case 'failed':
+        jobs = await queue.getFailedJobs();
+        break;
+      case 'delayed':
+        jobs = await queue.getDelayedJobs();
+        break;
+    }
+    return jobs || [];
+  }
+
+  private getQueueInstance(queueName: string): any {
+    switch (queueName) {
+      case 'notification':
+        return this.notificationQueue;
+      case 'email':
+        return this.emailQueue;
+      case 'report':
+        return this.reportQueue;
+      case 'cleanup':
+        return this.cleanupQueue;
+      default:
+        return null;
+    }
+  }
 }

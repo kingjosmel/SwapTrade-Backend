@@ -6,6 +6,7 @@ import { redisStore } from './cache.provider';
 import cacheConfig from '../config/cache.config';
 import { CacheWarmingService } from './cache-warming.service';
 import { CacheController } from './cache.controller';
+import { CacheService } from '../services/cache.service';
 import { Balance } from '../../balance/balance.entity';
 import { MarketData } from '../../trading/entities/market-data.entity';
 
@@ -23,7 +24,7 @@ import { MarketData } from '../../trading/entities/market-data.entity';
     }),
   ],
   controllers: [CacheController],
-  providers: [CacheWarmingService],
-  exports: [NestCacheModule, CacheWarmingService],
+  providers: [CacheService, CacheWarmingService],
+  exports: [NestCacheModule, CacheService, CacheWarmingService],
 })
 export class CustomCacheModule {}

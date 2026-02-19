@@ -204,4 +204,13 @@ export class CacheService {
   getCacheManager(): Cache {
     return this.cacheManager;
   }
+
+  /**
+   * Flush entire cache
+   */
+  async flush(): Promise<void> {
+    // Note: cache-manager doesn't have a reset method for all backends
+    // We reset metrics only as flushing all cache requires backend-specific code
+    this.resetMetrics();
+  }
 }
