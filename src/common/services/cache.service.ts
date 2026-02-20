@@ -1,7 +1,8 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Optional } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 import { CacheHitMissMetrics } from '../cache/interfaces/cache-warming.interface';
+import { MetricsService } from '../../metrics/metrics.service';
 
 @Injectable()
 export class CacheService {
@@ -10,7 +11,10 @@ export class CacheService {
   private warmedHits = 0;
   private warmedMisses = 0;
   
-  constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {}
+  constructor(
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    @Optional() private readonly metricsService?: MetricsService,
+  ) {}
 
   /**
    * Get value from cache
@@ -19,12 +23,14 @@ export class CacheService {
     const value = await this.cacheManager.get<T>(key);
     if (value !== undefined) {
       this.hits++;
+      this.metricsService?.recordCacheHit();
       // Track warmed cache hits
       if (this.isWarmedCacheKey(key)) {
         this.warmedHits++;
       }
     } else {
       this.misses++;
+      this.metricsService?.recordCacheMiss();
       // Track warmed cache misses
       if (this.isWarmedCacheKey(key)) {
         this.warmedMisses++;
@@ -45,6 +51,7 @@ export class CacheService {
    */
   async del(key: string): Promise<void> {
     await this.cacheManager.del(key);
+    this.metricsService?.recordCacheEviction();
   }
 
   /**

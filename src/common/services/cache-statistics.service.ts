@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { MetricsService } from '../../metrics/metrics.service';
 
 export interface CacheStatistics {
   hits: number;
@@ -28,6 +29,8 @@ export class CacheStatisticsService {
     lastUpdated: new Date(),
   };
 
+  constructor(@Optional() private readonly metricsService?: MetricsService) {}
+
   /**
    * Record a cache hit
    */
@@ -36,6 +39,7 @@ export class CacheStatisticsService {
     this.stats.totalRequests++;
     this.updateKeyStats(key, 'hits');
     this.updateHitRatio();
+    this.metricsService?.recordCacheHit();
   }
 
   /**
@@ -46,6 +50,7 @@ export class CacheStatisticsService {
     this.stats.totalRequests++;
     this.updateKeyStats(key, 'misses');
     this.updateHitRatio();
+    this.metricsService?.recordCacheMiss();
   }
 
   /**
@@ -56,6 +61,7 @@ export class CacheStatisticsService {
     this.stats.errorsByType[errorType] =
       (this.stats.errorsByType[errorType] || 0) + 1;
     this.updateKeyStats(key, 'errors');
+    this.metricsService?.recordCacheError();
   }
 
   /**
@@ -67,6 +73,7 @@ export class CacheStatisticsService {
       this.stats.keyStats[key].hits = 0;
       this.stats.keyStats[key].misses = 0;
     }
+    this.metricsService?.recordCacheEviction();
   }
 
   /**
