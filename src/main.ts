@@ -8,6 +8,7 @@ import { QueueMonitoringService } from './queue/queue-monitoring.service';
 import { validateMigrations } from './database/migrations/migration.guard';
 import { AppDataSource } from './database/data-source';
 import { ErrorLoggerService } from './common/logging/error-logger.service';
+import { ConfigService } from './config/config.service';
 
 // Import rate limiting middleware (will be available after npm install)
 // import { rateLimitMiddleware } from './ratelimit/ratelimit.middleware';
@@ -16,8 +17,9 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
 
-  // Get error logger service for global error handling
+  // Get services
   const errorLoggerService = app.get(ErrorLoggerService);
+  const configService = app.get(ConfigService);
 
   // Global validation pipe
   app.useGlobalPipes(
@@ -32,12 +34,11 @@ async function bootstrap() {
 
   // Enable CORS
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || '*',
-    credentials: true,
+    origin: configService.app.cors?.origin || '*',
+    credentials: configService.app.cors?.credentials || true,
+    methods: configService.app.cors?.methods || ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    allowedHeaders: configService.app.cors?.allowedHeaders || ['Content-Type', 'Authorization'],
   });
-
-  // Enable CORS
-  app.enableCors();
 
   // TODO: Uncomment and configure rate limiting middleware after installing dependencies
   /*
@@ -155,7 +156,7 @@ async function bootstrap() {
     process.exit(1);
   }
 
-  const port = process.env.PORT ?? 3000;
+  const port = configService.app.port;
   await app.listen(port);
 
   logger.log(`Application is running on: http://localhost:${port}`);

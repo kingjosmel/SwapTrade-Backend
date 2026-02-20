@@ -1,7 +1,6 @@
 // src/app.module.ts
 import { Module } from '@nestjs/common';
 import { CacheModule } from '@nestjs/cache-manager';
-import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
@@ -26,25 +25,35 @@ import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { ErrorLoggerService } from './common/logging/error-logger.service';
 import { AdvancedCacheInterceptor } from './common/interceptors/advanced-cache.interceptor';
+import { ConfigModule } from './config/config.module';
+import { ConfigService } from './config/config.service';
 
 @Module({
   imports: [
     // Configuration
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: '.env',
-    }),
+    ConfigModule,
 
     // Database
-    TypeOrmModule.forRoot({
-      type: 'sqlite',
-      database: 'swaptrade.db',
-      autoLoadEntities: true,
-      synchronize: false, // Use migrations instead
-      migrations: ['src/database/migrations/*.ts'],
-      migrationsTableName: 'migrations',
-      logging: true,
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        type: configService.database.type as any,
+        host: configService.database.host,
+        port: configService.database.port,
+        username: configService.database.username,
+        password: configService.database.password,
+        database: configService.database.database,
+        autoLoadEntities: configService.database.autoLoadEntities,
+        synchronize: configService.database.synchronize,
+        migrations: configService.database.migrations,
+        migrationsTableName: configService.database.migrationsTableName,
+        logging: configService.database.logging,
+      }),
+      inject: [ConfigService],
     }),
+
+    // Scheduling for cron jobs
+    ScheduleModule.forRoot(),
 
     // Scheduling for cron jobs
     ScheduleModule.forRoot(),
@@ -52,12 +61,17 @@ import { AdvancedCacheInterceptor } from './common/interceptors/advanced-cache.i
     // Cache Module
     CustomCacheModule,
 
-    BullModule.forRoot({
-      redis: {
-        host: process.env.REDIS_HOST,
-        port: Number(process.env.REDIS_PORT),
-        password: process.env.REDIS_PASSWORD || undefined,
-      },
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        redis: {
+          host: configService.redis.host,
+          port: configService.redis.port,
+          password: configService.redis.password || undefined,
+          db: configService.redis.db,
+        },
+      }),
+      inject: [ConfigService],
     }),
 
     // Background Job Queue (NEW) - Temporarily disabled due to compilation issue
