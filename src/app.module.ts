@@ -27,16 +27,23 @@ import { ErrorLoggerService } from './common/logging/error-logger.service';
 import { AdvancedCacheInterceptor } from './common/interceptors/advanced-cache.interceptor';
 import { ConfigModule } from './config/config.module';
 import { ConfigService } from './config/config.service';
+import { MetricsModule } from './metrics/metrics.module';
+import { MetricsInterceptor } from './metrics/metrics.interceptor';
+import { MetricsTypeOrmLogger } from './metrics/typeorm-logger';
+import { MetricsService } from './metrics/metrics.service';
 
 @Module({
   imports: [
     // Configuration
     ConfigModule,
 
+    // Metrics
+    MetricsModule,
+
     // Database
     TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
+      imports: [ConfigModule, MetricsModule],
+      useFactory: (configService: ConfigService, metricsService: MetricsService) => ({
         type: configService.database.type as any,
         host: configService.database.host,
         port: configService.database.port,
@@ -47,9 +54,11 @@ import { ConfigService } from './config/config.service';
         synchronize: configService.database.synchronize,
         migrations: configService.database.migrations,
         migrationsTableName: configService.database.migrationsTableName,
-        logging: configService.database.logging,
+        logging: ['query', 'error', 'warn'],
+        maxQueryExecutionTime: parseInt(process.env.DB_SLOW_QUERY_MS || '200', 10),
+        logger: new MetricsTypeOrmLogger(metricsService),
       }),
-      inject: [ConfigService],
+      inject: [ConfigService, MetricsService],
     }),
 
     // Scheduling for cron jobs
@@ -103,6 +112,10 @@ import { ConfigService } from './config/config.service';
     {
       provide: APP_INTERCEPTOR,
       useClass: AdvancedCacheInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: MetricsInterceptor,
     },
   ],
 })
