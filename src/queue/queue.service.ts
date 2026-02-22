@@ -3,6 +3,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue, Job, JobOptions } from 'bull';
 import { QueueName } from './queue.constants';
+import type {
+  SwapJobData,
+  SingleSwapJobData,
+  MultiLegSwapJobData,
+  BatchSwapJobData,
+} from '../swap/swap-batch.processor';
+
+// ── Existing job data interfaces (unchanged) ──────────────────────────────────
 
 export interface NotificationJobData {
   userId: string;
@@ -45,6 +53,8 @@ export interface CleanupJobData {
   batchSize?: number;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+
 @Injectable()
 export class QueueService {
   private readonly logger = new Logger(QueueService.name);
@@ -58,24 +68,103 @@ export class QueueService {
     private reportQueue: Queue<ReportJobData>,
     @InjectQueue(QueueName.CLEANUP)
     private cleanupQueue: Queue<CleanupJobData>,
+    @InjectQueue(QueueName.SWAPS)
+    private swapQueue: Queue<SwapJobData>,
   ) {}
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Swap queue  (new)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Queue a single async swap job.
+   */
+  async addSingleSwapJob(
+    data: SingleSwapJobData,
+    options?: JobOptions,
+  ): Promise<Job<SingleSwapJobData>> {
+    const job = await this.swapQueue.add('single', data, {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 500 },
+      removeOnComplete: false, // keep for audit
+      removeOnFail: false,
+      ...options,
+    });
+
+    this.logger.log(
+      `Single swap job queued: jobId=${job.id} swapId=${data.swapId}`,
+    );
+    return job as Job<SingleSwapJobData>;
+  }
+
+  /**
+   * Queue a multi-leg (routed) swap job.
+   */
+  async addMultiLegSwapJob(
+    data: MultiLegSwapJobData,
+    options?: JobOptions,
+  ): Promise<Job<MultiLegSwapJobData>> {
+    const job = await this.swapQueue.add('multi_leg', data, {
+      attempts: 2, // fewer retries for complex multi-leg
+      backoff: { type: 'exponential', delay: 1000 },
+      removeOnComplete: false,
+      removeOnFail: false,
+      ...options,
+    });
+
+    this.logger.log(
+      `Multi-leg swap job queued: jobId=${job.id} batchId=${data.batchId}`,
+    );
+    return job as Job<MultiLegSwapJobData>;
+  }
+
+  /**
+   * Queue a batch swap job (multiple swaps processed together).
+   */
+  async addBatchSwapJob(
+    data: BatchSwapJobData,
+    options?: JobOptions,
+  ): Promise<Job<BatchSwapJobData>> {
+    const job = await this.swapQueue.add('batch', data, {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 500 },
+      removeOnComplete: false,
+      removeOnFail: false,
+      ...options,
+    });
+
+    this.logger.log(
+      `Batch swap job queued: jobId=${job.id} batchId=${data.batchId} count=${data.swapIds.length}`,
+    );
+    return job as Job<BatchSwapJobData>;
+  }
+
+  /**
+   * Get current swap queue depth.
+   */
+  async getSwapQueueDepth(): Promise<{
+    waiting: number;
+    active: number;
+    completed: number;
+    failed: number;
+  }> {
+    return this.swapQueue.getJobCounts();
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Existing queue methods (unchanged below this line)
+  // ──────────────────────────────────────────────────────────────────────────
 
   async addNotificationJob(
     data: NotificationJobData,
     options?: JobOptions,
   ): Promise<Job<NotificationJobData>> {
     try {
-      const jobOptions: JobOptions = {
+      const job = await this.notificationQueue.add(data, {
         ...options,
         priority: this.getPriority(data.priority),
-      };
-
-      const job = await this.notificationQueue.add(data, jobOptions);
-
-      this.logger.log(
-        `Notification job added: ${job.id} for user ${data.userId}`,
-      );
-
+      });
+      this.logger.log(`Notification job added: ${job.id} for user ${data.userId}`);
       return job;
     } catch (error) {
       this.logger.error('Failed to add notification job:', error);
@@ -92,11 +181,8 @@ export class QueueService {
         data,
         opts: { priority: this.getPriority(data.priority) },
       }));
-
       const addedJobs = await this.notificationQueue.addBulk(jobs);
-
       this.logger.log(`Bulk notifications added: ${addedJobs.length} jobs`);
-
       return addedJobs;
     } catch (error) {
       this.logger.error('Failed to add bulk notifications:', error);
@@ -110,11 +196,9 @@ export class QueueService {
   ): Promise<Job<EmailJobData>> {
     try {
       const job = await this.emailQueue.add(data, options);
-
       this.logger.log(
         `Email job added: ${job.id} to ${Array.isArray(data.to) ? data.to.join(', ') : data.to}`,
       );
-
       return job;
     } catch (error) {
       this.logger.error('Failed to add email job:', error);
@@ -122,10 +206,7 @@ export class QueueService {
     }
   }
 
-  async sendWelcomeEmail(
-    email: string,
-    name: string,
-  ): Promise<Job<EmailJobData>> {
+  async sendWelcomeEmail(email: string, name: string): Promise<Job<EmailJobData>> {
     return this.addEmailJob({
       to: email,
       subject: 'Welcome to SwapTrade!',
@@ -151,13 +232,8 @@ export class QueueService {
     options?: JobOptions,
   ): Promise<Job<ReportJobData>> {
     try {
-      const job = await this.reportQueue.add(data, {
-        ...options,
-        priority: 5,
-      });
-
+      const job = await this.reportQueue.add(data, { ...options, priority: 5 });
       this.logger.log(`Report job added: ${job.id} type=${data.reportType}`);
-
       return job;
     } catch (error) {
       this.logger.error('Failed to add report job:', error);
@@ -170,7 +246,6 @@ export class QueueService {
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
     yesterday.setHours(0, 0, 0, 0);
-
     const endOfYesterday = new Date(yesterday);
     endOfYesterday.setHours(23, 59, 59, 999);
 
@@ -188,13 +263,8 @@ export class QueueService {
     options?: JobOptions,
   ): Promise<Job<CleanupJobData>> {
     try {
-      const job = await this.cleanupQueue.add(data, {
-        ...options,
-        priority: 10,
-      });
-
+      const job = await this.cleanupQueue.add(data, { ...options, priority: 10 });
       this.logger.log(`Cleanup job added: ${job.id} type=${data.type}`);
-
       return job;
     } catch (error) {
       this.logger.error('Failed to add cleanup job:', error);
@@ -205,7 +275,6 @@ export class QueueService {
   async cleanupOldTrades(daysOld = 90): Promise<Job<CleanupJobData>> {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysOld);
-
     return this.addCleanupJob({
       type: 'old_trades',
       olderThan: cutoffDate,
@@ -254,139 +323,117 @@ export class QueueService {
     }
   }
 
-  private getQueue(queueName: QueueName): Queue {
-    switch (queueName) {
-      case QueueName.NOTIFICATIONS:
-        return this.notificationQueue;
-      case QueueName.EMAILS:
-        return this.emailQueue;
-      case QueueName.REPORTS:
-        return this.reportQueue;
-      case QueueName.CLEANUP:
-        return this.cleanupQueue;
-      default:
-        throw new Error(`Unknown queue: ${queueName}`);
-    }
-  }
-
-  private getPriority(priority?: 'high' | 'normal' | 'low'): number {
-    switch (priority) {
-      case 'high':
-        return 1;
-      case 'normal':
-        return 5;
-      case 'low':
-        return 10;
-      default:
-        return 5;
-    }
-  }
-
   async closeAllQueues(): Promise<void> {
-    this.logger.log('Closing all queues gracefully...');
-
+    this.logger.log('Closing all queues gracefully…');
     await Promise.all([
       this.notificationQueue.close(),
       this.emailQueue.close(),
       this.reportQueue.close(),
       this.cleanupQueue.close(),
+      this.swapQueue.close(),
     ]);
-
     this.logger.log('All queues closed');
   }
 
   async getDashboardSummary(): Promise<any> {
-    // Returns summary of all queue metrics
     const metrics = await this.getAllQueueMetrics();
-    return {
-      totalQueues: 4,
-      metrics,
-      timestamp: new Date(),
-    };
+    return { totalQueues: 5, metrics, timestamp: new Date() };
   }
 
   async getAllQueueMetrics(): Promise<any> {
-    // Returns metrics for all queues
     return {
       notification: await this.getQueueMetrics('notification'),
       email: await this.getQueueMetrics('email'),
       report: await this.getQueueMetrics('report'),
       cleanup: await this.getQueueMetrics('cleanup'),
+      swaps: await this.getQueueMetrics('swaps'),
     };
   }
 
   async getQueueMetrics(queueName: string): Promise<any> {
     const queue = this.getQueueInstance(queueName);
     if (!queue) return null;
-    
     const counts = await queue.getJobCounts();
-    return {
-      queue: queueName,
-      ...counts,
-    };
+    return { queue: queueName, ...counts };
   }
 
   async getQueueJobCount(queueName: string): Promise<number> {
     const queue = this.getQueueInstance(queueName);
     if (!queue) return 0;
-    
     const counts = await queue.getJobCounts();
-    const total = (counts.active || 0) + (counts.waiting || 0) + (counts.delayed || 0) + (counts.completed || 0) + (counts.failed || 0);
-    return total;
+    return (
+      (counts.active || 0) +
+      (counts.waiting || 0) +
+      (counts.delayed || 0) +
+      (counts.completed || 0) +
+      (counts.failed || 0)
+    );
   }
 
   async waitUntilEmpty(queueName: string): Promise<void> {
     const queue = this.getQueueInstance(queueName);
     if (!queue) return;
-    
     await queue.whenCurrentJobsFinished();
   }
 
   async getJobDetails(queueName: string, jobId: string): Promise<any> {
     const queue = this.getQueueInstance(queueName);
     if (!queue) return null;
-    
     const job = await queue.getJob(jobId);
     return job ? job.toJSON() : null;
   }
 
-  async getJobsByStatus(queueName: string, status: string, _start?: number, _end?: number): Promise<any[]> {
+  async getJobsByStatus(
+    queueName: string,
+    status: string,
+    _start?: number,
+    _end?: number,
+  ): Promise<any[]> {
     const queue = this.getQueueInstance(queueName);
     if (!queue) return [];
-    
-    let jobs: any[] = [];
+
     switch (status) {
-      case 'active':
-        jobs = await queue.getActiveJobs();
-        break;
-      case 'waiting':
-        jobs = await queue.getWaitingJobs();
-        break;
-      case 'completed':
-        jobs = await queue.getCompletedJobs();
-        break;
-      case 'failed':
-        jobs = await queue.getFailedJobs();
-        break;
-      case 'delayed':
-        jobs = await queue.getDelayedJobs();
-        break;
+      case 'active':    return queue.getActiveJobs();
+      case 'waiting':   return queue.getWaitingJobs();
+      case 'completed': return queue.getCompletedJobs();
+      case 'failed':    return queue.getFailedJobs();
+      case 'delayed':   return queue.getDelayedJobs();
+      default:          return [];
     }
-    return jobs || [];
   }
 
-  private getQueueInstance(queueName: string): any {
+  // ──────────────────────────────────────────────────────────────────────────
+  // Private helpers
+  // ──────────────────────────────────────────────────────────────────────────
+
+  private getQueue(queueName: QueueName): Queue {
     switch (queueName) {
-      case 'notification':
-        return this.notificationQueue;
-      case 'email':
-        return this.emailQueue;
-      case 'report':
-        return this.reportQueue;
-      case 'cleanup':
-        return this.cleanupQueue;
-      default:
-        return null;
+      case QueueName.NOTIFICATIONS: return this.notificationQueue;
+      case QueueName.EMAILS:        return this.emailQueue;
+      case QueueName.REPORTS:       return this.reportQueue;
+      case QueueName.CLEANUP:       return this.cleanupQueue;
+      case QueueName.SWAPS:         return this.swapQueue;
+      default: throw new Error(`Unknown queue: ${queueName}`);
+    }
+  }
+
+  private getQueueInstance(queueName: string): Queue | null {
+    switch (queueName) {
+      case 'notification': return this.notificationQueue;
+      case 'email':        return this.emailQueue;
+      case 'report':       return this.reportQueue;
+      case 'cleanup':      return this.cleanupQueue;
+      case 'swaps':        return this.swapQueue;
+      default:             return null;
+    }
+  }
+
+  private getPriority(priority?: 'high' | 'normal' | 'low'): number {
+    switch (priority) {
+      case 'high':   return 1;
+      case 'normal': return 5;
+      case 'low':    return 10;
+      default:       return 5;
     }
   }
 }

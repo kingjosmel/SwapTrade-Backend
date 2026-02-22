@@ -1,10 +1,15 @@
 // src/app.module.ts
 import { Module } from '@nestjs/common';
-import { CacheModule } from '@nestjs/cache-manager';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { BullModule } from '@nestjs/bull';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+
+// ── Feature modules ───────────────────────────────────────────────────────────
 import { AuthModule } from './auth/auth.module';
 import { PortfolioModule } from './portfolio/portfolio.module';
 import { TradingModule } from './trading/trading.module';
@@ -19,32 +24,38 @@ import { SwapModule } from './swap/swap.module';
 import { TutorialModule } from './tutorial/tutorial.module';
 import { PerformanceModule } from './performance/performance.module';
 import { QueueModule } from './queue/queue.module';
+
+// ── Infrastructure modules ────────────────────────────────────────────────────
 import { CustomCacheModule } from './common/cache/cache.module';
-import { BullModule } from '@nestjs/bull';
-import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
-import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
-import { ErrorLoggerService } from './common/logging/error-logger.service';
-import { AdvancedCacheInterceptor } from './common/interceptors/advanced-cache.interceptor';
 import { ConfigModule } from './config/config.module';
-import { ConfigService } from './config/config.service';
 import { MetricsModule } from './metrics/metrics.module';
 import { RateLimitModule } from './ratelimit/ratelimit.module';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { MetricsTypeOrmLogger } from './metrics/typeorm-logger';
 import { MetricsService } from './metrics/metrics.service';
+import { MetricsTypeOrmLogger } from './metrics/typeorm-logger';
+import { ErrorLoggerService } from './common/logging/error-logger.service';
+
+// ── Filters / interceptors ────────────────────────────────────────────────────
+import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
+import { AdvancedCacheInterceptor } from './common/interceptors/advanced-cache.interceptor';
+import { MetricsInterceptor } from './metrics/metrics.interceptor';
 
 @Module({
   imports: [
-    // Configuration
+    // ── Config (must be first — many factories depend on it) ────────────────
     ConfigModule,
 
-    // Metrics
+    // ── Observability ────────────────────────────────────────────────────────
     MetricsModule,
 
-    // Database
+    // ── Database ─────────────────────────────────────────────────────────────
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule, MetricsModule],
-      useFactory: (configService: ConfigService, metricsService: MetricsService) => ({
+      useFactory: (
+        configService: ConfigService,
+        metricsService: MetricsService,
+      ) => ({
         type: configService.database.type as any,
         host: configService.database.host,
         port: configService.database.port,
@@ -56,21 +67,29 @@ import { MetricsService } from './metrics/metrics.service';
         migrations: configService.database.migrations,
         migrationsTableName: configService.database.migrationsTableName,
         logging: ['query', 'error', 'warn'],
-        maxQueryExecutionTime: parseInt(process.env.DB_SLOW_QUERY_MS || '200', 10),
+        maxQueryExecutionTime: parseInt(
+          process.env.DB_SLOW_QUERY_MS ?? '200',
+          10,
+        ),
         logger: new MetricsTypeOrmLogger(metricsService),
       }),
       inject: [ConfigService, MetricsService],
     }),
 
-    // Scheduling for cron jobs
+    // ── Scheduling (registered once) ─────────────────────────────────────────
     ScheduleModule.forRoot(),
 
-    // Scheduling for cron jobs
-    ScheduleModule.forRoot(),
+    // ── Event bus (required by BiddingGateway + AuctionTimerService) ─────────
+    EventEmitterModule.forRoot({
+      // Allow wildcard listeners e.g. 'auction.*' — set false if not needed
+      wildcard: false,
+      // Max listeners per event (raise if you add more @OnEvent handlers)
+      maxListeners: 20,
+      // Catch listener errors so one bad handler doesn't crash the bus
+      ignoreErrors: false,
+    }),
 
-    // Cache Module
-    CustomCacheModule,
-
+    // ── Redis / Bull ──────────────────────────────────────────────────────────
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
@@ -80,14 +99,24 @@ import { MetricsService } from './metrics/metrics.service';
           password: configService.redis.password || undefined,
           db: configService.redis.db,
         },
+        // Shared Bull defaults — individual queues can override per-queue
+        defaultJobOptions: {
+          removeOnComplete: false, // keep completed jobs for audit
+          removeOnFail: false,     // keep failed jobs for inspection
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 500 },
+        },
       }),
       inject: [ConfigService],
     }),
 
-    // Background Job Queue (NEW) - Temporarily disabled due to compilation issue
-    // QueueModule,
+    // ── Cache ─────────────────────────────────────────────────────────────────
+    CustomCacheModule,
 
-    // Existing modules
+    // ── Background job queues ─────────────────────────────────────────────────
+    QueueModule,
+
+    // ── Feature modules ───────────────────────────────────────────────────────
     AuthModule,
     // Distributed rate limiting
     RateLimitModule,
@@ -104,18 +133,26 @@ import { MetricsService } from './metrics/metrics.service';
     TutorialModule,
     PerformanceModule,
   ],
+
   controllers: [AppController],
+
   providers: [
     AppService,
     ErrorLoggerService,
+
+    // Global exception handler
     {
       provide: APP_FILTER,
       useClass: GlobalExceptionFilter,
     },
+
+    // Cache-aware HTTP response interceptor
     {
       provide: APP_INTERCEPTOR,
       useClass: AdvancedCacheInterceptor,
     },
+
+    // Request / response metrics
     {
       provide: APP_INTERCEPTOR,
       useClass: MetricsInterceptor,
