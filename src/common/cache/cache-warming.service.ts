@@ -6,8 +6,10 @@ import { CacheService } from '../services/cache.service';
 import { CacheWarmingConfig, CacheWarmingMetrics, WarmingStrategyResult } from './interfaces/cache-warming.interface';
 import { Balance } from '../../balance/balance.entity';
 import { MarketData } from '../../trading/entities/market-data.entity';
+import { VirtualAsset } from '../../trading/entities/virtual-asset.entity';
 import { PortfolioService } from '../../portfolio/portfolio.service';
 import { ConfigService as AppConfigService } from '../../config/config.service';
+import { MetricsService } from '../../metrics/metrics.service';
 
 @Injectable()
 export class CacheWarmingService implements OnApplicationBootstrap {
@@ -31,8 +33,13 @@ export class CacheWarmingService implements OnApplicationBootstrap {
     @InjectRepository(MarketData)
     @Optional()
     private readonly marketDataRepository?: Repository<MarketData>,
+    @InjectRepository(VirtualAsset)
+    @Optional()
+    private readonly virtualAssetRepository?: Repository<VirtualAsset>,
     @Optional()
     private readonly portfolioService?: PortfolioService,
+    @Optional()
+    private readonly metricsService?: MetricsService,
   ) {}
 
   async onApplicationBootstrap() {
@@ -53,6 +60,16 @@ export class CacheWarmingService implements OnApplicationBootstrap {
       
       this.warmingMetrics.warmingDuration = duration;
       this.logger.log(`Cache warming completed in ${duration}ms. Keys warmed: ${this.warmingMetrics.totalKeysWarmed}`);
+      
+      // Record cache warming metrics - simulate cache hits for warmed keys
+      for (let i = 0; i < this.warmingMetrics.totalKeysWarmed; i++) {
+        this.metricsService?.recordCacheHit();
+      }
+      
+      // Get and record cache hit/miss metrics after warming
+      const cacheMetrics = this.cacheService.getCacheMetrics();
+      this.logger.log(`Cache hit ratio after warming: ${cacheMetrics.hitRate.toFixed(2)}% (${cacheMetrics.hits}/${cacheMetrics.hits + cacheMetrics.misses})`);
+      this.logger.log(`Warmed cache hit ratio: ${cacheMetrics.warmedHitRate.toFixed(2)}% (${cacheMetrics.warmedHits}/${cacheMetrics.warmedHits + cacheMetrics.warmedMisses})`);
       
       // Log individual strategy results
       for (const [strategyName, result] of Object.entries(this.warmingMetrics.strategyResults)) {
@@ -75,7 +92,7 @@ export class CacheWarmingService implements OnApplicationBootstrap {
     return {
       enabled: cacheConfig.warming?.enabled || false,
       timeout: cacheConfig.warming?.timeout || 30000,
-      strategies: cacheConfig.warming?.strategies || ['user_balances', 'market_data', 'portfolio']
+      strategies: cacheConfig.warming?.strategies || ['user_balances', 'market_data', 'trading_pairs', 'portfolio']
     };
   }
 
@@ -83,6 +100,7 @@ export class CacheWarmingService implements OnApplicationBootstrap {
     const strategies: Record<string, () => Promise<WarmingStrategyResult>> = {
       user_balances: () => this.warmUserBalances(),
       market_data: () => this.warmMarketData(),
+      trading_pairs: () => this.warmTradingPairs(),
       portfolio: () => this.warmPortfolioData()
     };
 
@@ -224,6 +242,50 @@ export class CacheWarmingService implements OnApplicationBootstrap {
     } catch (error) {
       return {
         strategyName: 'market_data',
+        success: false,
+        keysWarmed: 0,
+        duration: 0,
+        error: error.message
+      };
+    }
+  }
+
+  private async warmTradingPairs(): Promise<WarmingStrategyResult> {
+    if (!this.virtualAssetRepository) {
+      return {
+        strategyName: 'trading_pairs',
+        success: false,
+        keysWarmed: 0,
+        duration: 0,
+        error: 'Virtual asset repository not available'
+      };
+    }
+
+    try {
+      const virtualAssets = await this.virtualAssetRepository.find();
+      let keysWarmed = 0;
+
+      for (const asset of virtualAssets) {
+        // Cache trading pair information
+        await this.cacheService.set(`trading_pair:${asset.symbol}`, {
+          symbol: asset.symbol,
+          name: asset.name,
+          balances: asset.balances,
+          createdAt: asset.createdAt
+        }, 300); // 5 minutes TTL
+        
+        keysWarmed++;
+      }
+
+      return {
+        strategyName: 'trading_pairs',
+        success: true,
+        keysWarmed,
+        duration: 0 // Will be set by caller
+      };
+    } catch (error) {
+      return {
+        strategyName: 'trading_pairs',
         success: false,
         keysWarmed: 0,
         duration: 0,

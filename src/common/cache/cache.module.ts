@@ -9,6 +9,7 @@ import { CacheController } from './cache.controller';
 import { CacheService } from '../services/cache.service';
 import { Balance } from '../../balance/balance.entity';
 import { MarketData } from '../../trading/entities/market-data.entity';
+import { VirtualAsset } from '../../trading/entities/virtual-asset.entity';
 import { ConfigService as AppConfigService } from '../../config/config.service';
 import { RedisPoolService } from './redis-pool.service';
 import { RedisMetricsService } from './redis-metrics.service';
@@ -17,7 +18,7 @@ import { createRedisPooledStore } from './redis-pooled-store';
 @Module({
   imports: [
     ConfigModule.forFeature(cacheConfig),
-    TypeOrmModule.forFeature([Balance, MarketData]),
+    TypeOrmModule.forFeature([Balance, MarketData, VirtualAsset]),
     NestCacheModule.registerAsync({
       isGlobal: true,
       imports: [ConfigModule],
