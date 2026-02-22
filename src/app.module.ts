@@ -28,6 +28,7 @@ import { AdvancedCacheInterceptor } from './common/interceptors/advanced-cache.i
 import { ConfigModule } from './config/config.module';
 import { ConfigService } from './config/config.service';
 import { MetricsModule } from './metrics/metrics.module';
+import { RateLimitModule } from './ratelimit/ratelimit.module';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { MetricsTypeOrmLogger } from './metrics/typeorm-logger';
 import { MetricsService } from './metrics/metrics.service';
@@ -88,6 +89,8 @@ import { MetricsService } from './metrics/metrics.service';
 
     // Existing modules
     AuthModule,
+    // Distributed rate limiting
+    RateLimitModule,
     PortfolioModule,
     TradingModule,
     UserModule,

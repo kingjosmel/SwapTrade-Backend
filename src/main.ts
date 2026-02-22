@@ -9,6 +9,8 @@ import { validateMigrations } from './database/migrations/migration.guard';
 import { AppDataSource } from './database/data-source';
 import { ErrorLoggerService } from './common/logging/error-logger.service';
 import { ConfigService } from './config/config.service';
+import { rateLimitMiddlewareFactory } from './ratelimit/ratelimit.middleware';
+import { RateLimitService } from './ratelimit/rate-limit.service';
 
 // Import rate limiting middleware (will be available after npm install)
 // import { rateLimitMiddleware } from './ratelimit/ratelimit.middleware';
@@ -48,6 +50,16 @@ async function bootstrap() {
     next(); // Temporary bypass until dependencies are installed
   });
   */
+
+  // Apply distributed rate limiting middleware if feature enabled
+  try {
+    const rateLimitService = app.get(RateLimitService);
+    if (configService.features?.enableRateLimiting) {
+      app.use(rateLimitMiddlewareFactory(rateLimitService, configService));
+    }
+  } catch (e) {
+    // if RateLimitService not available, continue without middleware
+  }
 
   // Swagger configuration
   const config = new DocumentBuilder()
