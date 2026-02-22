@@ -2,9 +2,10 @@ import { Injectable, Logger, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, LessThanOrEqual, Repository } from 'typeorm';
 import { TradeEntity } from './entities/trade.entity';
-import { PortfolioAnalytics } from 'src/common/interfaces/portfolio.interface';
-import { Balance } from 'src/balance/balance.entity';
-import { Trade } from 'src/trading/entities/trade.entity';
+import { PortfolioRepository } from './portfolio.repository';
+import { PortfolioAnalytics } from '../common/interfaces/portfolio.interface';
+import { Balance } from '../balance/balance.entity';
+import { Trade } from '../trading/entities/trade.entity';
 import {
   AssetAllocation,
   PortfolioSummaryDto,
@@ -14,10 +15,10 @@ import {
   AssetPerformance,
   PortfolioPerformanceDto,
 } from './dto/portfolio-performance.dto';
-import { TradeType } from 'src/common/enums/trade-type.enum';
+import { TradeType } from '../common/enums/trade-type.enum';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
-import { CacheService } from 'src/common/services/cache.service';
+import { CacheService } from '../common/services/cache.service';
 
 interface MarketPrice {
   price: number;
@@ -55,66 +56,72 @@ export class PortfolioService {
     private balanceRepository: Repository<Balance>,
     @InjectRepository(Trade)
     private tradeRepository: Repository<Trade>,
+    private readonly portfolioRepository: PortfolioRepository,
     private readonly cacheService: CacheService,
   ) {}
 
   private readonly PORTFOLIO_CACHE_TTL = 60; // 1 minute
+  private readonly ANALYTICS_CACHE_TTL = 120; // 2 minutes (as per requirement)
 
   /**
    * Get analytics for a user's portfolio.
-   * Calculates:
+   * 
+   * OPTIMIZED VERSION:
+   * - Uses QueryBuilder aggregation instead of N+1 queries
+   * - Single consolidated database query
+   * - Caches results with 2-minute TTL
+   * - Performs efficiently even with 10k+ trades
+   * 
+   * Metrics calculated:
    * - Profit & Loss (PnL)
-   * - Asset distribution
-   * - Simple risk score
+   * - Asset distribution (percentages)
+   * - Risk score (standard deviation of allocations)
    */
   async getAnalytics(userId: string): Promise<PortfolioAnalytics> {
-    const trades = await this.tradeRepo.find({ where: { userId } });
+    const cacheKey = `portfolio:analytics:${userId}`;
+    const startTime = Date.now();
 
-    if (!trades.length) {
-      return { pnl: 0, assetDistribution: {}, riskScore: 0 };
+    // Try to get from cache first
+    try {
+      const cached = await this.cacheService.get<PortfolioAnalytics>(cacheKey);
+      if (cached) {
+        this.logger.log(
+          `Portfolio analytics retrieved from cache for userId: ${userId}`,
+        );
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Cache read failed for analytics: ${error.message}, falling back to database`,
+      );
     }
 
-    let pnl = 0;
-    const assetValues: Record<string, { bought: number; sold: number }> = {};
+    // Fetch analytics using optimized aggregation query
+    const analytics =
+      await this.portfolioRepository.getPortfolioAnalyticsAggregated(userId);
 
-    for (const trade of trades) {
-      if (!assetValues[trade.asset]) {
-        assetValues[trade.asset] = { bought: 0, sold: 0 };
-      }
-
-      const tradeValue = trade.quantity * Number(trade.price);
-
-      if (trade.side === 'BUY') {
-        assetValues[trade.asset].bought += tradeValue;
-        pnl -= tradeValue;
-      } else if (trade.side === 'SELL') {
-        assetValues[trade.asset].sold += tradeValue;
-        pnl += tradeValue;
-      }
-    }
-
-    // ✅ Asset Distribution (percentage of each asset)
-    const totalValue = Object.values(assetValues).reduce(
-      (sum, a) => sum + Math.max(a.sold, a.bought),
-      0,
+    const queryTime = Date.now() - startTime;
+    this.logger.log(
+      `Portfolio analytics calculated in ${queryTime}ms with aggregation query`,
     );
 
-    const assetDistribution: Record<string, number> = {};
-    for (const [asset, value] of Object.entries(assetValues)) {
-      assetDistribution[asset] =
-        (Math.max(value.sold, value.bought) / totalValue) * 100;
+    // Cache the result with 2-minute TTL (120 seconds)
+    try {
+      await this.cacheService.set(
+        cacheKey,
+        analytics,
+        this.ANALYTICS_CACHE_TTL, // TTL in seconds
+      );
+      this.logger.debug(
+        `Analytics cached for ${this.ANALYTICS_CACHE_TTL}s (userId: ${userId})`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to cache analytics: ${error.message}, operation continues without cache`,
+      );
     }
 
-    // ✅ Risk Score (standard deviation of asset allocation)
-    const allocations = Object.values(assetDistribution);
-    const mean =
-      allocations.reduce((a, b) => a + b, 0) / allocations.length || 0;
-    const variance =
-      allocations.reduce((acc, x) => acc + Math.pow(x - mean, 2), 0) /
-        allocations.length || 0;
-    const riskScore = Math.sqrt(variance);
-
-    return { pnl, assetDistribution, riskScore };
+    return analytics;
   }
   async getPortfolioSummary(userId: string): Promise<PortfolioSummaryDto> {
     try {

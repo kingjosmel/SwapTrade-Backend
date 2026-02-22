@@ -1,4 +1,4 @@
-import { TradeType } from 'src/common/enums/trade-type.enum';
+import { TradeType } from '../../common/enums/trade-type.enum';
 import {
   Entity,
   Column,

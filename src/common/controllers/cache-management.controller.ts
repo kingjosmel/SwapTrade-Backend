@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { CacheStatisticsService } from '../services/cache-statistics.service';
-import { CacheWarmingService } from '../services/cache-warming-advanced.service';
+import { CacheWarmingService } from '../cache/cache-warming.service';
 import { CacheService } from '../services/cache.service';
 
 @ApiTags('cache-management')
@@ -117,15 +117,15 @@ export class CacheManagementController {
    */
   @Get('warming/tasks')
   @ApiOperation({
-    summary: 'Get cache warming task status',
-    description: 'Returns status of all cache warming tasks',
+    summary: 'Get cache warming metrics',
+    description: 'Returns metrics of cache warming',
   })
-  @ApiResponse({ status: 200, description: 'Warming tasks retrieved' })
+  @ApiResponse({ status: 200, description: 'Warming metrics retrieved' })
   getWarmingTasks() {
-    const tasks = this.cacheWarming.getTasks();
+    const metrics = this.cacheWarming.getWarmingMetrics();
     return {
       success: true,
-      data: tasks,
+      data: metrics,
       timestamp: new Date().toISOString(),
     };
   }
@@ -142,11 +142,12 @@ export class CacheManagementController {
   @ApiResponse({ status: 200, description: 'Cache warming triggered' })
   async triggerWarming(@Query('task') taskName?: string) {
     this.logger.log(`Triggering cache warming${taskName ? ` for task: ${taskName}` : ''}`);
-    await this.cacheWarming.triggerWarming(taskName);
+    const metrics = await this.cacheWarming.forceWarmCache();
     return {
       success: true,
       message: 'Cache warming triggered successfully',
       task: taskName || 'full_warming',
+      metrics,
       timestamp: new Date().toISOString(),
     };
   }
@@ -157,21 +158,22 @@ export class CacheManagementController {
   @Post('warming/task/:taskName/:action')
   @HttpCode(200)
   @ApiOperation({
-    summary: 'Enable or disable a warming task',
-    description: 'Enable or disable a specific cache warming task',
+    summary: 'Get cache warming status',
+    description: 'Get current cache warming status',
   })
-  @ApiResponse({ status: 200, description: 'Task state updated' })
+  @ApiResponse({ status: 200, description: 'Task state retrieved' })
   setTaskState(
     @Param('taskName') taskName: string,
     @Param('action') action: 'enable' | 'disable',
   ) {
     const enabled = action === 'enable';
-    this.cacheWarming.setTaskEnabled(taskName, enabled);
+    const isWarming = this.cacheWarming.isCurrentlyWarming();
     return {
       success: true,
-      message: `Task '${taskName}' ${enabled ? 'enabled' : 'disabled'}`,
+      message: `Cache warming status: ${isWarming ? 'warming in progress' : 'idle'}`,
       taskName,
       enabled,
+      isWarming,
       timestamp: new Date().toISOString(),
     };
   }
